@@ -92,12 +92,21 @@ func routeRequest(w http.ResponseWriter, r *http.Request) {
 	shortName := r.RequestURI
 	log.Printf("Got request for %s", shortName)
 
-	if len(shortName) == 0 {
-		fmt.Fprintf(w, "Welcome to go-shorty\nTo add a redirect GET to %s/add/short=url\nTo delete GET to %s/delete/short", r.URL.Host, r.URL.Host)
+	if shortName == "/" {
+		prefix := r.Host
+		fmt.Fprintf(w, "Welcome to go-shorty\n\nTo add a redirect GET to %s/add/short=url\nTo delete GET to %s/delete/short\nGet a list of all redirects, GET to %s/list", prefix, prefix, prefix)
 	} else if strings.HasPrefix(shortName, "/add/") {
 		assumeRequestIsAddRedir(w, r)
 	} else if strings.HasPrefix(shortName, "/delete/") {
 		assumeRequestIsRemoveRedir(w, r)
+	} else if strings.HasPrefix(shortName, "/list") {
+		a, err := ioutil.ReadFile(redirFile)
+		if err == nil {
+			fmt.Fprint(w, string(a))
+		} else {
+			log.Printf("Could not list redirects %v", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
 	} else {
 		assumeRequestIsARedir(w, r)
 	}
