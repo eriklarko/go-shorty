@@ -9,30 +9,39 @@ import (
 	"io/ioutil"
 	"os"
 	"strings"
+	"flag"
+	"path/filepath"
 )
 
-var redirFile string = "redirs.json"
+var redirFile string
 var db map[string]string
 
 func main() {
+	flag.StringVar(&redirFile, "redirFile", "redirs.json", "The path to the file to use as persistent storage")
+	port := flag.String("port", "8080", "Which port to start the HTTP server on")
+	flag.Parse()
+
+	initializeRedirections()
+	startHttpServer(*port)
+}
+
+func initializeRedirections() {
 	var err error
 	db, err = readRedirectFile()
 	if err != nil {
 		log.Panicf("Could not read redir file, %+v", err)
 	}
-
-	http.HandleFunc("/", handler)
-	err = http.ListenAndServe(":80", nil)
-	if err == nil {
-		log.Println("Started http server on port 80")
-	} else {
-		log.Panicf("Could not start http server, %v\n", err)
-	}
 }
 
 func readRedirectFile() (map[string]string, error) {
+	absPath, err := filepath.Abs(redirFile)
+	if err != nil {
+		log.Printf("Could not read absolute path of %s. Everything is fine but I can't tell you exactly where the config file is\n", err)
+	}
+
+	log.Printf("Reading redirects from %s\n", absPath)
 	if _, err := os.Stat(redirFile); os.IsNotExist(err) {
-		log.Println("No config file found, starting without any redirects")
+		log.Printf("%s was not found, starting without any redirects\n", redirFile)
 		return make(map[string]string), nil
 	}
 
@@ -47,22 +56,31 @@ func readRedirectFile() (map[string]string, error) {
 		return nil, errors.New("Unable to parse contents of redirect file, " + err.Error())
 	}
 
-	log.Printf("Starting with the following redirs:\n %v\n", string(b))
+	log.Printf("Starting with the following redirs:\n%v\n", string(b))
 	return m, nil
 }
 
-func addRedir(shortName, redirectTo string) error {
+func startHttpServer(port string) {
+	http.HandleFunc("/", routeRequest)
+	log.Printf("Starting http server on port %s\n", port)
+	err := http.ListenAndServe(":" + port, nil)
+	if err != nil {
+		log.Panicf("Error occured in the http server, %v\n", err)
+	}
+}
+
+func addRedirection(shortName, redirectTo string) error {
 	log.Printf("Adding or updating redirect %s -> %s", shortName, redirectTo)
 	db[shortName] = redirectTo
-	return persistRedirs()
+	return persistRedirections()
 }
 
-func removeRedir(shortName string) error {
+func removeRedirection(shortName string) error {
 	delete(db, shortName)
-	return persistRedirs()
+	return persistRedirections()
 }
 
-func persistRedirs() error {
+func persistRedirections() error {
 	b, err := json.MarshalIndent(db, "", "    ")
 	if err != nil {
 		return errors.New("Unable to marshal the current redirects to JSON, " + err.Error())
@@ -70,12 +88,12 @@ func persistRedirs() error {
 	return ioutil.WriteFile(redirFile, b, 0644)
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
+func routeRequest(w http.ResponseWriter, r *http.Request) {
 	shortName := r.URL.Path[1:]
 	log.Printf("Got request for %s", shortName)
 
-	if len(shortName) == 0{
-		fmt.Fprintf(w, "Welcome to go-shorty, to add a redirect GET to %s/add/short=url\nto delete GET to %s/delete/short", r.URL.Host, r.URL.Host)
+	if len(shortName) == 0 {
+		fmt.Fprintf(w, "Welcome to go-shorty\nTo add a redirect GET to %s/add/short=url\nTo delete GET to %s/delete/short", r.URL.Host, r.URL.Host)
 	} else if strings.HasPrefix(shortName, "add/") {
 		assumeRequestIsAddRedir(w, r)
 	} else if strings.HasPrefix(shortName, "remove/") {
@@ -86,18 +104,33 @@ func handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func assumeRequestIsAddRedir(w http.ResponseWriter, r *http.Request) {
+	from, to, err := parseFromAndTo(r)
+	if err != nil {
+		log.Printf("Could not parse add redirect input %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err = addRedirection(from, to)
+	if err == nil {
+		fmt.Fprintf(w, "Successfully added redirect %s -> %s", from, to)
+	} else {
+		reply := fmt.Sprintf("Failed adding redirect %s -> %s , %+v", from, to, err)
+		http.Error(w, reply, 500)
+	}
+}
+
+func parseFromAndTo(r *http.Request) (string, string, error) {
 	a := strings.Split(r.URL.Path, "/")
 	if len(a) < 2 {
 		reply := fmt.Sprintf("Invalid add format, use %s/add/from=to", r.Host)
-		http.Error(w, reply, http.StatusBadRequest)
-		return
+		return "", "", errors.New(reply);
 	}
 
 	rawParts := strings.Split(a[2], "=")
 	if len(rawParts) < 2 {
 		reply := fmt.Sprintf("Invalid add format, use %s/add/from=to", r.Host)
-		http.Error(w, reply, http.StatusBadRequest)
-		return
+		return "", "", errors.New(reply)
 	}
 
 	from := rawParts[0]
@@ -111,13 +144,7 @@ func assumeRequestIsAddRedir(w http.ResponseWriter, r *http.Request) {
 		to = "http://" + to
 	}
 
-	err := addRedir(from, to)
-	if err == nil {
-		fmt.Fprintf(w, "Successfully added redirect %s -> %s", from, to)
-	} else {
-		reply := fmt.Sprintf("Failed adding redirect %s -> %s , %+v", from, to, err)
-		http.Error(w, reply, 500)
-	}
+	return from, to, nil
 }
 
 func assumeRequestIsRemoveRedir(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +156,7 @@ func assumeRequestIsRemoveRedir(w http.ResponseWriter, r *http.Request) {
 	}
 
 	from := a[2]
-	err := removeRedir(from)
+	err := removeRedirection(from)
 	if err == nil {
 		fmt.Fprint(w, "Successfully deleted redirect %s ", from,)
 	} else {
@@ -148,6 +175,8 @@ func assumeRequestIsARedir(w http.ResponseWriter, r *http.Request) {
 
 	} else if found {
 		log.Printf("Found match %s -> %s", shortName, redirectTo)
+		// TODO: Check if the match is something that can be redirected to
+		// it e.g, has to start with a valid protocol such as http://
 		http.Redirect(w, r, redirectTo, http.StatusFound)
 
 	} else {
