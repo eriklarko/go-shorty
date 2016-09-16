@@ -89,14 +89,14 @@ func persistRedirections() error {
 }
 
 func routeRequest(w http.ResponseWriter, r *http.Request) {
-	shortName := r.URL.Path[1:]
+	shortName := r.RequestURI
 	log.Printf("Got request for %s", shortName)
 
 	if len(shortName) == 0 {
 		fmt.Fprintf(w, "Welcome to go-shorty\nTo add a redirect GET to %s/add/short=url\nTo delete GET to %s/delete/short", r.URL.Host, r.URL.Host)
-	} else if strings.HasPrefix(shortName, "add/") {
+	} else if strings.HasPrefix(shortName, "/add/") {
 		assumeRequestIsAddRedir(w, r)
-	} else if strings.HasPrefix(shortName, "remove/") {
+	} else if strings.HasPrefix(shortName, "/delete/") {
 		assumeRequestIsRemoveRedir(w, r)
 	} else {
 		assumeRequestIsARedir(w, r)
@@ -104,7 +104,7 @@ func routeRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func assumeRequestIsAddRedir(w http.ResponseWriter, r *http.Request) {
-	from, to, err := parseFromAndTo(r)
+	from, to, err := parseFromAndTo(r.RequestURI)
 	if err != nil {
 		log.Printf("Could not parse add redirect input %v", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -113,30 +113,33 @@ func assumeRequestIsAddRedir(w http.ResponseWriter, r *http.Request) {
 
 	err = addRedirection(from, to)
 	if err == nil {
-		fmt.Fprintf(w, "Successfully added redirect %s -> %s", from, to)
+		s := fmt.Sprintf( "Successfully added redirect %s -> %s", from, to)
+		log.Println(s)
+		fmt.Fprintf(w, s)
 	} else {
 		reply := fmt.Sprintf("Failed adding redirect %s -> %s , %+v", from, to, err)
+		log.Println(reply)
 		http.Error(w, reply, 500)
 	}
 }
 
-func parseFromAndTo(r *http.Request) (string, string, error) {
-	a := strings.Split(r.URL.Path, "/")
+func parseFromAndTo(rawString string) (string, string, error) {
+	a := strings.Split(rawString, "/")
 	if len(a) < 2 {
-		reply := fmt.Sprintf("Invalid add format, use %s/add/from=to", r.Host)
+		reply := fmt.Sprintf("Invalid add format, use /add/from=to")
 		return "", "", errors.New(reply);
 	}
 
 	rawParts := strings.Split(a[2], "=")
 	if len(rawParts) < 2 {
-		reply := fmt.Sprintf("Invalid add format, use %s/add/from=to", r.Host)
+		reply := fmt.Sprintf("Invalid add format, use /add/from=to")
 		return "", "", errors.New(reply)
 	}
 
 	from := rawParts[0]
 
-	i := strings.Index(r.URL.Path, from + "=") + len(from + "=")
-	to := r.URL.Path[i:]
+	i := strings.Index(rawString, from + "=") + len(from + "=")
+	to := rawString[i:]
 	if !strings.Contains(to, "://") && strings.Contains(to, ":/") {
 		to = strings.Replace(to, ":/", "://", 1)
 	}
@@ -151,6 +154,7 @@ func assumeRequestIsRemoveRedir(w http.ResponseWriter, r *http.Request) {
 	a := strings.Split(r.URL.Path, "/")
 	if len(a) < 2 {
 		reply := fmt.Sprintf("Invalid add format, use %s/delete/short", r.Host)
+		log.Println(reply)
 		http.Error(w, reply, http.StatusBadRequest)
 		return
 	}
@@ -158,9 +162,12 @@ func assumeRequestIsRemoveRedir(w http.ResponseWriter, r *http.Request) {
 	from := a[2]
 	err := removeRedirection(from)
 	if err == nil {
-		fmt.Fprint(w, "Successfully deleted redirect %s ", from,)
+		reply := fmt.Sprintf("Successfully deleted redirect %s ", from)
+		log.Println(reply)
+		fmt.Fprint(w, reply)
 	} else {
 		reply := fmt.Sprintf("Failed removing redirect %s, %+v", from, err)
+		log.Println(reply)
 		http.Error(w, reply, 500)
 	}
 }
