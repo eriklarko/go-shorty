@@ -11,6 +11,7 @@ import (
 	"strings"
 	"flag"
 	"path/filepath"
+	"net/url"
 )
 
 var redirFile string
@@ -62,7 +63,7 @@ func readRedirectFile() (map[string]string, error) {
 
 func startHttpServer(port string) {
 	http.HandleFunc("/", routeRequest)
-	log.Printf("Starting http server on port %s\n", port)
+	log.Printf("Starting http server on http://localhost:%s\n", port)
 	err := http.ListenAndServe(":" + port, nil)
 	if err != nil {
 		log.Panicf("Error occured in the http server, %v\n", err)
@@ -93,8 +94,7 @@ func routeRequest(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Got request for %s", shortName)
 
 	if shortName == "/" {
-		prefix := r.Host
-		fmt.Fprintf(w, "Welcome to go-shorty\n\nTo add a redirect GET to %s/add/short=url\nTo delete GET to %s/delete/short\nGet a list of all redirects, GET to %s/list", prefix, prefix, prefix)
+		fmt.Fprintf(w, getUsage(getProtocol(r.URL) + "://" + r.Host))
 	} else if strings.HasPrefix(shortName, "/add/") {
 		assumeRequestIsAddRedir(w, r)
 	} else if strings.HasPrefix(shortName, "/delete/") {
@@ -109,6 +109,33 @@ func routeRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		assumeRequestIsARedir(w, r)
+	}
+}
+
+func getUsage(linkPrefix string) string {
+	return fmt.Sprintf(`Welcome to go-shorty
+
+To add a redirect, send a GET request to %[1]s/add/short=url
+
+    E.g. %[1]s/add/g=www.google.com
+
+
+To delete a redirect, send a GET to %[1]s/delete/short
+
+    E.g. %[1]s/delete/g
+
+
+Get a list of all redirects by sending a GET request to %[1]s/list
+
+
+
+https://github.com/eriklarko/go-shorty`, linkPrefix)
+}
+func getProtocol(url *url.URL) string {
+	if len(url.Scheme) == 0 {
+		return "http"
+	} else {
+		return url.Scheme
 	}
 }
 
